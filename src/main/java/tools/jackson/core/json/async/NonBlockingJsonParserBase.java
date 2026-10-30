@@ -1,0 +1,828 @@
+package tools.jackson.core.json.async;
+
+import java.io.*;
+
+import tools.jackson.core.*;
+import tools.jackson.core.io.IOContext;
+import tools.jackson.core.json.JsonParserBase;
+import tools.jackson.core.json.JsonReadContext;
+import tools.jackson.core.json.JsonReadFeature;
+import tools.jackson.core.sym.ByteQuadsCanonicalizer;
+import tools.jackson.core.util.ByteArrayBuilder;
+
+import static tools.jackson.core.JsonTokenId.*;
+
+/**
+ * Intermediate base class for non-blocking JSON parsers.
+ */
+public abstract class NonBlockingJsonParserBase
+    extends JsonParserBase
+{
+    /*
+    /**********************************************************************
+    /* Major state constants
+    /**********************************************************************
+     */
+
+    /**
+     * State right after parser has been constructed, before seeing the first byte
+     * to handle possible (but optional) BOM.
+     */
+    protected final static int MAJOR_INITIAL = 0;
+
+    /**
+     * State right after parser a root value has been
+     * finished, but next token has not yet been recognized.
+     */
+    protected final static int MAJOR_ROOT = 1;
+
+    protected final static int MAJOR_OBJECT_PROPERTY_FIRST = 2;
+    protected final static int MAJOR_OBJECT_PROPERTY_NEXT = 3;
+
+    protected final static int MAJOR_OBJECT_VALUE = 4;
+
+    protected final static int MAJOR_ARRAY_ELEMENT_FIRST = 5;
+    protected final static int MAJOR_ARRAY_ELEMENT_NEXT = 6;
+
+    /**
+     * State after non-blocking input source has indicated that no more input
+     * is forthcoming AND we have exhausted all the input
+     */
+    protected final static int MAJOR_CLOSED = 7;
+
+    /*
+    /**********************************************************************
+    /* Minor state constants
+    /**********************************************************************
+     */
+
+    /**
+     * State in which part of (UTF-8) BOM has been detected, but not yet completely.
+     */
+    protected final static int MINOR_ROOT_BOM = 1;
+
+    /**
+     * State between root-level value, waiting for at least one white-space
+     * character as separator
+     *
+     * @deprecated Since 3.1.8 not used
+     */
+    @Deprecated // since 3.1.8
+    protected final static int MINOR_ROOT_NEED_SEPARATOR = 2;
+
+    /**
+     * State between root-level value, having processed at least one white-space
+     * character, and expecting either more, start of a value, or end of input
+     * stream.
+     *
+     * @deprecated Since 3.1.8 not used
+     */
+    @Deprecated // since 3.1.8
+    protected final static int MINOR_ROOT_GOT_SEPARATOR = 3;
+
+    // state before property name itself, waiting for quote (or unquoted name)
+    protected final static int MINOR_PROPERTY_LEADING_WS = 4;
+    // state before property name, expecting comma (or closing curly), then property name
+    protected final static int MINOR_PROPERTY_LEADING_COMMA = 5;
+
+    // State within regular (double-quoted) property name
+    protected final static int MINOR_PROPERTY_NAME = 7;
+    // State within regular (double-quoted) property name, within escape (having
+    // encountered either just backslash, or backslash and 'u' and 0 - 3 hex digits,
+    protected final static int MINOR_PROPERTY_NAME_ESCAPE = 8;
+
+    protected final static int MINOR_PROPERTY_APOS_NAME = 9;
+    protected final static int MINOR_PROPERTY_UNQUOTED_NAME = 10;
+
+    protected final static int MINOR_VALUE_LEADING_WS = 12;
+    protected final static int MINOR_VALUE_EXPECTING_COMMA = 13;
+    protected final static int MINOR_VALUE_EXPECTING_COLON = 14;
+    protected final static int MINOR_VALUE_WS_AFTER_COMMA = 15;
+
+    protected final static int MINOR_VALUE_TOKEN_NULL = 16;
+    protected final static int MINOR_VALUE_TOKEN_TRUE = 17;
+    protected final static int MINOR_VALUE_TOKEN_FALSE = 18;
+
+    protected final static int MINOR_VALUE_TOKEN_NON_STD = 19;
+
+    protected final static int MINOR_NUMBER_PLUS = 22;
+
+    protected final static int MINOR_NUMBER_MINUS = 23;
+    protected final static int MINOR_NUMBER_ZERO = 24; // zero as first, possibly trimming multiple
+    protected final static int MINOR_NUMBER_MINUSZERO = 25; // "-0" (and possibly more zeroes) receive
+    protected final static int MINOR_NUMBER_INTEGER_DIGITS = 26;
+
+    protected final static int MINOR_NUMBER_FRACTION_DIGITS = 30;
+    protected final static int MINOR_NUMBER_EXPONENT_MARKER = 31;
+    protected final static int MINOR_NUMBER_EXPONENT_DIGITS = 32;
+
+    // Resumption state for an explicit '+' followed by '0' (and possibly more
+    // zeros). Companion to {@link #MINOR_NUMBER_ZERO} and
+    // {@link #MINOR_NUMBER_MINUSZERO}; needed so that the buffered text on
+    // resume correctly retains the leading '+' character.
+    protected final static int MINOR_NUMBER_PLUSZERO = 33;
+
+    // [core#707] JSON5 hexadecimal literal states:
+    //  - HEX_PREFIX: textBuffer holds optional sign + '0' + 'x'/'X'; awaiting first hex digit
+    //  - HEX_DIGITS: textBuffer holds sign + '0x'/'0X' + at least one hex digit; awaiting more
+    protected final static int MINOR_NUMBER_HEX_PREFIX = 34;
+    protected final static int MINOR_NUMBER_HEX_DIGITS = 35;
+
+    protected final static int MINOR_VALUE_STRING = 40;
+    protected final static int MINOR_VALUE_STRING_ESCAPE = 41;
+    protected final static int MINOR_VALUE_STRING_UTF8_2 = 42;
+    protected final static int MINOR_VALUE_STRING_UTF8_3 = 43;
+    protected final static int MINOR_VALUE_STRING_UTF8_4 = 44;
+    protected final static int MINOR_VALUE_APOS_STRING = 45;
+
+    /**
+     * Special state at which point decoding of a non-quoted token has encountered
+     * a problem; that is, either not matching fully (like "truf" instead of "true",
+     * at "tru"), or not having trailing separator (or end of input), like "trueful".
+     * Attempt is made, then, to decode likely full input token to report suitable
+     * error.
+     */
+    protected final static int MINOR_VALUE_TOKEN_ERROR = 50;
+
+    protected final static int MINOR_COMMENT_LEADING_SLASH = 51;
+    protected final static int MINOR_COMMENT_CLOSING_ASTERISK = 52;
+    protected final static int MINOR_COMMENT_C = 53;
+    protected final static int MINOR_COMMENT_CPP = 54;
+    protected final static int MINOR_COMMENT_YAML = 55;
+
+    /*
+    /**********************************************************************
+    /* Helper objects, symbols (property names)
+    /**********************************************************************
+     */
+
+    /**
+     * Symbol table that contains property names encountered so far
+     */
+    final protected ByteQuadsCanonicalizer _symbols;
+
+    /**
+     * Temporary buffer used for name parsing.
+     */
+    protected int[] _quadBuffer = new int[8];
+
+    protected int _quadLength;
+
+    protected int _quad1;
+
+    /**
+     * State of token suspended at end of input, meaning depends on minor state:
+     *<ul>
+     * <li>Property names: current (partial) quad</li>
+     * <li>UTF-8 sequences in String values: bits decoded so far</li>
+     * <li>Keywords, BOM: number of bytes matched so far</li>
+     * <li>Comments: minor state to return to after comment</li>
+     *</ul>
+     */
+    protected int _pending32;
+
+    /**
+     * Companion to {@link #_pending32}, meaning depends on minor state:
+     *<ul>
+     * <li>Property names: number of bytes in current quad</li>
+     * <li>UTF-8 sequences in String values: number of bytes decoded so far
+     *   (for 4-byte sequences, range already verified if 2 or more)</li>
+     * <li>Comments: 4-byte UTF-8 lead byte whose range is yet to be verified
+     *   against the following byte (0 if none)</li>
+     *</ul>
+     */
+    protected int _pendingBytes;
+
+    /**
+     * Partially decoded value of escape sequence split across input buffers.
+     */
+    protected int _quoted32;
+
+    /**
+     * State of escape sequence split across input buffers: non-negative value
+     * is the number of hex digits of unicode escape read so far; negative values
+     * are special states (see {@code QUOTED_xxx} constants of
+     * {@link NonBlockingUtf8JsonParserBase}).
+     */
+    protected int _quotedDigits;
+
+    /**
+     * High surrogate code point awaiting matching low surrogate during
+     * property name parsing, or 0 if none pending.
+     *
+     * @since 3.1
+     */
+    protected int _pendingSurrogateInName;
+
+    /*
+    /**********************************************************************
+    /* Additional parsing state
+    /**********************************************************************
+     */
+
+    /**
+     * Current main decoding state within logical tree
+     */
+    protected int _majorState;
+
+    /**
+     * Value of {@link #_majorState} after completing a scalar value
+     */
+    protected int _majorStateAfterValue;
+
+    /**
+     * Additional indicator within state; contextually relevant for just that state
+     */
+    protected int _minorState;
+
+    /**
+     * Secondary minor state indicator used during decoding of escapes and/or
+     * multi-byte Unicode characters
+     */
+    protected int _minorStateAfterSplit;
+
+    /**
+     * Flag that is sent when calling application indicates that there will
+     * be no more input to parse.
+     */
+    protected boolean _endOfInput = false;
+
+    /*
+    /**********************************************************************
+    /* Additional parsing state: non-standard tokens
+    /**********************************************************************
+     */
+
+    protected final static int NON_STD_TOKEN_NAN = 0;
+
+    protected final static int NON_STD_TOKEN_INFINITY = 1;
+    protected final static int NON_STD_TOKEN_PLUS_INFINITY = 2;
+    protected final static int NON_STD_TOKEN_MINUS_INFINITY = 3;
+
+    protected final static String[] NON_STD_TOKENS = new String[] {
+            "NaN",
+            "Infinity", "+Infinity", "-Infinity",
+    };
+
+    protected final static double[] NON_STD_TOKEN_VALUES = new double[] {
+            Double.NaN,
+            Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
+    };
+
+    /**
+     * When tokenizing non-standard ("odd") tokens, this is the type to consider;
+     * also works as index to actual textual representation.
+     */
+    protected int _nonStdTokenType;
+
+    /*
+    /**********************************************************************
+    /* Location tracking, additional
+    /**********************************************************************
+     */
+
+    /**
+     * Since we are fed content that may or may not start at zero offset, we need
+     * to keep track of the first byte within that buffer, to be able to calculate
+     * logical offset within input "stream"
+     */
+    protected int _currBufferStart = 0;
+
+    /**
+     * Alternate row tracker, used to keep track of position by `\r` marker
+     * (whereas <code>_currInputRow</code> tracks `\n`). Used to simplify
+     * tracking of linefeeds, assuming that input typically uses various
+     * linefeed combinations (`\r`, `\n` or `\r\n`) consistently, in which
+     * case we can simply choose max of two row candidates.
+     */
+    protected int _currInputRowAlt = 1;
+
+    /*
+    /**********************************************************************
+    /* Life-cycle
+    /**********************************************************************
+     */
+
+    public NonBlockingJsonParserBase(ObjectReadContext readCtxt, IOContext ctxt,
+            int stdFeatures, int formatFeatures, ByteQuadsCanonicalizer sym)
+    {
+        super(readCtxt, ctxt, stdFeatures, formatFeatures);
+        _symbols = sym;
+        _currToken = null;
+        _majorState = MAJOR_INITIAL;
+        _majorStateAfterValue = MAJOR_ROOT;
+    }
+
+    @Override
+    public boolean canParseAsync() { return true; }
+
+    @Override
+    public boolean willInternPropertyNames() {
+        return _symbols.willInternStrings();
+    }
+
+    /*
+    /**********************************************************
+    /* Test support
+    /**********************************************************
+     */
+
+    // Alas, needs to be public for testing
+    public ByteQuadsCanonicalizer symbolTableForTests() {
+        return _symbols;
+    }
+
+    /*
+    /**********************************************************
+    /* Abstract methods from JsonParser
+    /**********************************************************
+     */
+
+    @Override
+    public abstract int releaseBuffered(OutputStream out) throws JacksonException;
+
+    @Override
+    protected void _releaseBuffers() throws JacksonException
+    {
+        super._releaseBuffers();
+        // Merge found symbols, if any:
+        _symbols.release();
+        // any other temp buffers?
+    }
+
+    @Override
+    public Object streamReadInputSource() {
+        // since input is "pushed", to traditional source...
+        return null;
+    }
+
+    @Override
+    protected void _closeInput() {
+        // 30-May-2017, tatu: Seems like this is the most certain way to prevent
+        //    further decoding... not the optimal place, but due to inheritance
+        //    hierarchy most convenient.
+        _currBufferStart = 0;
+        _inputEnd = 0;
+    }
+
+    /*
+    /**********************************************************************
+    /* Overridden methods
+    /**********************************************************************
+     */
+
+    @Override
+    public boolean hasStringCharacters()
+    {
+        if (_currToken == JsonToken.VALUE_STRING) {
+            // yes; is or can be made available efficiently as char[]
+            return _textBuffer.hasTextAsCharacters();
+        }
+        if (_currToken == JsonToken.PROPERTY_NAME) {
+            // not necessarily; possible but:
+            return _nameCopied;
+        }
+        // other types, no benefit from accessing as char[]
+        return false;
+    }
+
+    @Override
+    public TokenStreamLocation currentLocation()
+    {
+        int col = _inputPtr - _currInputRowStart + 1; // 1-based
+        // Since we track CR and LF separately, max should gives us right answer
+        int row = Math.max(_currInputRow, _currInputRowAlt);
+        return new TokenStreamLocation(_contentReference(),
+                _currInputProcessed + (_inputPtr - _currBufferStart), -1L, // bytes, chars
+                row, col);
+    }
+
+    @Override // @since 2.17
+    protected TokenStreamLocation _currentLocationMinusOne() {
+        final int prevInputPtr = _inputPtr - 1;
+        int row = Math.max(_currInputRow, _currInputRowAlt);
+        final int col = prevInputPtr - _currInputRowStart + 1; // 1-based
+        return new TokenStreamLocation(_contentReference(),
+                _currInputProcessed + (prevInputPtr - _currBufferStart), -1L, // bytes, chars
+                row, col);
+    }
+
+    @Override
+    public TokenStreamLocation currentTokenLocation()
+    {
+        return new TokenStreamLocation(_contentReference(),
+                _tokenInputTotal, -1L, _tokenInputRow, _tokenInputCol);
+    }
+
+    /*
+    /**********************************************************************
+    /* Public API, access to token information, text
+    /**********************************************************************
+     */
+
+    /**
+     * Method for accessing textual representation of the current event;
+     * if no current event (before first call to {@link #nextToken}, or
+     * after encountering end-of-input), returns null.
+     * Method can be called for any event.
+     *
+     * @throws JacksonException if there are general I/O or parse issues, including if the text is too large,
+     * see {@link tools.jackson.core.StreamReadConstraints.Builder#maxStringLength(int)}
+     */
+    @Override
+    public String getString() throws JacksonException
+    {
+        if (_currToken == JsonToken.VALUE_STRING) {
+            return _textBuffer.contentsAsString();
+        }
+        return _getText2(_currToken);
+    }
+
+    protected final String _getText2(JsonToken t) throws JacksonException
+    {
+        if (t == null) {
+            return null;
+        }
+        switch (t.id()) {
+        case ID_NOT_AVAILABLE:
+            return null;
+        case ID_PROPERTY_NAME:
+            return _streamReadContext.currentName();
+        case ID_STRING:
+            // fall through
+        case ID_NUMBER_INT:
+        case ID_NUMBER_FLOAT:
+            return _textBuffer.contentsAsString();
+        default:
+          return t.asString();
+        }
+    }
+
+    @Override // since 2.8
+    public int getString(Writer writer) throws JacksonException
+    {
+        JsonToken t = _currToken;
+        try {
+            if (t == JsonToken.VALUE_STRING) {
+                return _textBuffer.contentsToWriter(writer);
+            }
+            if (t == JsonToken.PROPERTY_NAME) {
+                String n = _streamReadContext.currentName();
+                writer.write(n);
+                return n.length();
+            }
+            if (t != null) {
+                if (t.isNumeric()) {
+                    return _textBuffer.contentsToWriter(writer);
+                }
+                if (t == JsonToken.NOT_AVAILABLE) {
+                    _reportError("Current token not available: cannot call this method");
+                }
+                char[] ch = t.asCharArray();
+                writer.write(ch);
+                return ch.length;
+            }
+        } catch (IOException e) {
+            throw _wrapIOFailure(e);
+        }
+        return 0;
+    }
+
+    /**
+     * Non-blocking parsers cannot reliably support streaming string reads
+     * since content availability is unpredictable. This method throws
+     * {@link UnsupportedOperationException} to indicate that it should not
+     * be used with non-blocking parsers.
+     *
+     * @throws UnsupportedOperationException always, as this operation is not
+     *         supported for non-blocking parsers
+     */
+    @Override
+    public long readString(Writer writer) throws JacksonException
+    {
+        throw new UnsupportedOperationException(
+"`readString(Writer)` not supported for non-blocking parsers: content availability is unpredictable and `java.io.Writer` itself blocking");
+    }
+
+    // // // Let's override default impls for improved performance
+
+    @Override
+    public String getValueAsString() throws JacksonException
+    {
+        if (_currToken == JsonToken.VALUE_STRING) {
+            return _textBuffer.contentsAsString();
+        }
+        if (_currToken == JsonToken.PROPERTY_NAME) {
+            return currentName();
+        }
+        return super.getValueAsString(null);
+    }
+
+    @Override
+    public String getValueAsString(String defValue) throws JacksonException
+    {
+        if (_currToken == JsonToken.VALUE_STRING) {
+            return _textBuffer.contentsAsString();
+        }
+        if (_currToken == JsonToken.PROPERTY_NAME) {
+            return currentName();
+        }
+        return super.getValueAsString(defValue);
+    }
+
+    @Override
+    public char[] getStringCharacters() throws JacksonException
+    {
+        if (_currToken != null) { // null only before/after document
+            switch (_currToken.id()) {
+
+            case ID_PROPERTY_NAME:
+                return currentNameInBuffer();
+            case ID_STRING:
+                // fall through
+            case ID_NUMBER_INT:
+            case ID_NUMBER_FLOAT:
+                return _textBuffer.getTextBuffer();
+
+            default:
+                return _currToken.asCharArray();
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public int getStringLength() throws JacksonException
+    {
+        if (_currToken != null) { // null only before/after document
+            switch (_currToken.id()) {
+
+            case ID_PROPERTY_NAME:
+                return _streamReadContext.currentName().length();
+            case ID_STRING:
+                // fall through
+            case ID_NUMBER_INT:
+            case ID_NUMBER_FLOAT:
+                return _textBuffer.size();
+
+            default:
+                return _currToken.asCharArray().length;
+            }
+        }
+        return 0;
+    }
+
+    @Override
+    public int getStringOffset() throws JacksonException
+    {
+        // Most have offset of 0, only some may have other values:
+        if (_currToken != null) {
+            switch (_currToken.id()) {
+            case ID_PROPERTY_NAME:
+                return 0;
+            case ID_STRING:
+                // fall through
+            case ID_NUMBER_INT:
+            case ID_NUMBER_FLOAT:
+                return _textBuffer.getTextOffset();
+            default:
+            }
+        }
+        return 0;
+    }
+
+    /*
+    /**********************************************************************
+    /* Public API, access to token information, binary
+    /**********************************************************************
+     */
+
+    @Override
+    public byte[] getBinaryValue(Base64Variant b64variant) throws JacksonException
+    {
+        if (_currToken != JsonToken.VALUE_STRING) {
+            _reportError("Current token (%s) not VALUE_STRING or VALUE_EMBEDDED_OBJECT, cannot access as binary",
+                    _currToken);
+        }
+        if (_binaryValue == null) {
+            @SuppressWarnings("resource")
+            ByteArrayBuilder builder = _getByteArrayBuilder();
+            _decodeBase64(getString(), builder, b64variant);
+            _binaryValue = builder.toByteArray();
+        }
+        return _binaryValue;
+    }
+
+    @Override
+    public int readBinaryValue(Base64Variant b64variant, OutputStream out) throws JacksonException
+    {
+        byte[] b = getBinaryValue(b64variant);
+        try {
+            out.write(b);
+        } catch (IOException e) {
+            throw _wrapIOFailure(e);
+        }
+        return b.length;
+    }
+
+    @Override
+    public Object getEmbeddedObject() throws JacksonException
+    {
+        if (_currToken == JsonToken.VALUE_EMBEDDED_OBJECT ) {
+            return _binaryValue;
+        }
+        return null;
+    }
+
+    /*
+    /**********************************************************************
+    /* Handling of nested scope, state
+    /**********************************************************************
+     */
+
+    protected final JsonToken _startArrayScope() throws JacksonException
+    {
+        createChildArrayContext(-1, -1);
+        _majorState = MAJOR_ARRAY_ELEMENT_FIRST;
+        _majorStateAfterValue = MAJOR_ARRAY_ELEMENT_NEXT;
+        return _updateToken(JsonToken.START_ARRAY);
+    }
+
+    protected final JsonToken _startObjectScope() throws JacksonException
+    {
+        createChildObjectContext(-1, -1);
+        _majorState = MAJOR_OBJECT_PROPERTY_FIRST;
+        _majorStateAfterValue = MAJOR_OBJECT_PROPERTY_NEXT;
+        return _updateToken(JsonToken.START_OBJECT);
+    }
+
+    protected final JsonToken _closeArrayScope() throws JacksonException
+    {
+        if (!_streamReadContext.inArray()) {
+            _reportMismatchedEndMarker(']', '}');
+        }
+        JsonReadContext ctxt = _streamReadContext.getParent();
+        _streamReadContext = ctxt;
+        int st;
+        if (ctxt.inObject()) {
+            st = MAJOR_OBJECT_PROPERTY_NEXT;
+        } else if (ctxt.inArray()) {
+            st = MAJOR_ARRAY_ELEMENT_NEXT;
+        } else {
+            st = MAJOR_ROOT;
+        }
+        _majorState = st;
+        _majorStateAfterValue = st;
+        return _updateToken(JsonToken.END_ARRAY);
+    }
+
+    protected final JsonToken _closeObjectScope() throws JacksonException
+    {
+        if (!_streamReadContext.inObject()) {
+            _reportMismatchedEndMarker('}', ']');
+        }
+        JsonReadContext ctxt = _streamReadContext.getParent();
+        _streamReadContext = ctxt;
+        int st;
+        if (ctxt.inObject()) {
+            st = MAJOR_OBJECT_PROPERTY_NEXT;
+        } else if (ctxt.inArray()) {
+            st = MAJOR_ARRAY_ELEMENT_NEXT;
+        } else {
+            st = MAJOR_ROOT;
+        }
+        _majorState = st;
+        _majorStateAfterValue = st;
+        return _updateToken(JsonToken.END_OBJECT);
+    }
+
+    /*
+    /**********************************************************
+    /* Internal methods, symbol (name) handling
+    /**********************************************************
+     */
+
+    protected final String _findName(int q1, int lastQuadBytes) throws JacksonException
+    {
+        q1 = _padLastQuad(q1, lastQuadBytes);
+        // Usually we'll find it from the canonical symbol table already
+        String name = _symbols.findName(q1);
+        if (name != null) {
+            return name;
+        }
+        // If not, more work. We'll need add stuff to buffer
+        _quadBuffer[0] = q1;
+        return _decodeAndAddUTF8Name(_symbols, _quadBuffer, 1, lastQuadBytes);
+    }
+
+    protected final String _findName(int q1, int q2, int lastQuadBytes) throws JacksonException
+    {
+        q2 = _padLastQuad(q2, lastQuadBytes);
+        // Usually we'll find it from the canonical symbol table already
+        String name = _symbols.findName(q1, q2);
+        if (name != null) {
+            return name;
+        }
+        // If not, more work. We'll need add stuff to buffer
+        _quadBuffer[0] = q1;
+        _quadBuffer[1] = q2;
+        return _decodeAndAddUTF8Name(_symbols, _quadBuffer, 2, lastQuadBytes);
+    }
+
+    protected final String _findName(int q1, int q2, int q3, int lastQuadBytes) throws JacksonException
+    {
+        q3 = _padLastQuad(q3, lastQuadBytes);
+        String name = _symbols.findName(q1, q2, q3);
+        if (name != null) {
+            return name;
+        }
+        int[] quads = _quadBuffer;
+        quads[0] = q1;
+        quads[1] = q2;
+        quads[2] = q3; // already padded
+        return _decodeAndAddUTF8Name(_symbols, quads, 3, lastQuadBytes);
+    }
+
+    /**
+     * @deprecated Since 3.1.8 use {@link #_decodeAndAddUTF8Name} instead
+     */
+    @Deprecated // @since 3.1.8
+    protected final String _addName(int[] quads, int qlen, int lastQuadBytes)
+        throws JacksonException
+    {
+        return _decodeAndAddUTF8Name(_symbols, quads, qlen, lastQuadBytes);
+    }
+
+    /*
+    /**********************************************************************
+    /* Internal methods, state changes
+    /**********************************************************************
+     */
+
+    // Helper method called at point when all input has been exhausted and
+    // input feeder has indicated no more input will be forthcoming.
+    protected final JsonToken _eofAsNextToken() throws JacksonException {
+        _majorState = MAJOR_CLOSED;
+        if (!_streamReadContext.inRoot()) {
+            _handleEOF();
+        }
+        close();
+        return _updateTokenToNull();
+    }
+
+    protected final JsonToken _fieldComplete(String name) throws JacksonException
+    {
+        _majorState = MAJOR_OBJECT_VALUE;
+        _streamReadContext.setCurrentName(name);
+        return _updateToken(JsonToken.PROPERTY_NAME);
+    }
+
+    protected final JsonToken _valueComplete(JsonToken t) throws JacksonException
+    {
+        _majorState = _majorStateAfterValue;
+        return _updateToken(t);
+    }
+
+    protected final JsonToken _valueCompleteInt(int value, String asText) throws JacksonException
+    {
+        _textBuffer.resetWithString(asText);
+        _intLength = asText.length();
+        _numTypesValid = NR_INT; // to force parsing
+        _numberInt = value;
+        _majorState = _majorStateAfterValue;
+        return _updateToken(JsonToken.VALUE_NUMBER_INT);
+    }
+
+    protected final String _nonStdToken(int type) {
+        return NON_STD_TOKENS[type];
+    }
+
+    /*
+    /**********************************************************************
+    /* Internal methods, error reporting, related
+    /**********************************************************************
+     */
+
+    protected final JsonToken _valueNonStdNumberComplete(int type) throws JacksonException
+    {
+        String tokenStr = NON_STD_TOKENS[type];
+        _textBuffer.resetWithString(tokenStr);
+        if (!isEnabled(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS)) {
+            _reportError("Non-standard token '%s': enable `JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS` to allow",
+                    tokenStr);
+        }
+        _intLength = 0;
+        _numTypesValid = NR_DOUBLE;
+        _numberDouble = NON_STD_TOKEN_VALUES[type];
+        _majorState = _majorStateAfterValue;
+        return _updateToken(JsonToken.VALUE_NUMBER_FLOAT);
+    }
+
+    protected final void _updateTokenLocation()
+    {
+        _tokenInputRow = Math.max(_currInputRow, _currInputRowAlt);
+        final int ptr = _inputPtr;
+        _tokenInputCol = ptr - _currInputRowStart;
+        _tokenInputTotal = _currInputProcessed + (ptr - _currBufferStart);
+    }
+}

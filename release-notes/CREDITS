@@ -1,0 +1,174 @@
+Here are people who have contributed to the development of Jackson JSON processor
+core component, version 3.x
+(version numbers in brackets indicate release in which the problem was fixed)
+
+(note: for older credits, check out `CREDITS-2.x`)
+
+Tatu Saloranta, tatu.saloranta@iki.fi: author
+
+PJ Fanning (pjfanning@github): co-author (2.15+)
+
+----------------------------------------------------------------------------
+
+Sven Döring (@sdoeringNew)
+ * Contributed #680: Allow use of `java.nio.file.Path` as parser source, generator target
+  (3.0.0)
+
+@sri-adarsh-kumar
+ * Contributed #1288: Add new method like `JsonParser.readText(Writer)` (and
+   implementation) for truly non-buffering reads
+  (3.1.0)
+
+Nicholas Rayburn (@nrayburn-tech)
+ * Contributed #1514: Additional configuration to closer match Jackson 2 behavior
+  (3.1.0)
+
+Henri Biström (@hb16)
+ * Reported #1527: `TokenStreamFactory.createNonBlockingByteBufferParser()` return type wrong
+  (3.1.0)
+
+Afzal Najam (@AfzalivE)
+ * Reported #1541: Unexpected Illegal surrogate character when parsing field names
+  (3.1.0)
+
+Prabhav Srinath (@sprabhav7)
+ * Reported #1553: Max Depth validation not working for `DataInput`-backed `JsonParser`s
+   in 3.0
+  (3.1.0)
+
+Rohan Nagendra (@rohan-repos)
+ * Reported #1553: Max Depth validation not working for `DataInput`-backed `JsonParser`s
+   in 3.0
+  (3.1.0)
+
+Rob Spoor (@robtimus)
+ * Reported #1561: Javadoc for 3.1.0 doesn't work (build with JDK 21)
+  (3.1.2)
+
+Revanth Meesala (@revanthmeesala)
+ * Contributed #1642: Fix maxDocumentLength bypass in async parser single-feedInput()
+   case [GHSA-2c4j-63jj-9fqr]
+  (3.1.6)
+
+@tinyb0y
+ * Contributed #1643: Enforce maxNameLength incrementally in ReaderBasedJsonParser
+   [GHSA-649p-m576-vr99]
+  (3.1.6)
+
+DongNyoung Lee (@Dongnyoung)
+ * Contributed #1651: Fix object context handling for buffered `INCLUDE_NON_NULL` tokens
+  (3.1.6)
+ * Contributed #1667: `JsonParser.willInternPropertyNames()` returns `true` even when
+   `CANONICALIZE_PROPERTY_NAMES` is disabled
+  (3.2.3)
+ * Reported, fixed #1646: Non-blocking ByteBuffer parser `releaseBuffered()` can write
+   already-consumed bytes
+  (3.3.0)
+ * Reported, fixed #1664: UTF-8 byte-backed parsers report raw byte instead of
+   decoded character for invalid root-value separator
+  (3.3.0)
+ * Reported #1654: Stale symbol table child can replace a newer root table
+  (3.3.0)
+ * Reported, fixed #1685: Lower `BigDecimalParser` FastDoubleParser cutoff from
+   500 to 200 characters
+  (3.3.0)
+ * Reported, fixed #1686: Synchronous decimal number parsing buffers oversized
+   values before `maxNumberLength` validation
+  (3.3.0)
+ * Reported, fixed #1703: Validate name length in `UTF8DataInputJsonParser` before
+   quad buffer growth
+  (3.1.7)
+ * Reported, fixed #1711: `File`/`Path` generator targets may be leaked, double-closed
+   or truncated when construction fails
+  (3.1.7)
+ * Reported #1724: Use target exception's original message and type when wrapping
+   `InvocationTargetException` with path information
+  (3.1.8)
+ * Fixed #1727: UTF-8 surrogate code points not rejected when skipping String values
+  (3.3.0)
+ * Reported, fixed #1752: `UTF8DataInputJsonParser` should preserve I/O failures
+   during invalid token reporting
+  (3.3.0)
+ * Reported, fixed #1753: Reject 4-byte UTF-8 sequences exceeding U+10FFFF in
+   String values of `UTF8StreamJsonParser`
+  (3.3.0)
+ * Reported, fixed #1766: `ReaderBasedJsonParser` undercounts number length when
+   fraction or exponent is absent
+  (3.3.0)
+
+seonwoojung (@seonwooj0810)
+ * Contributed #707: Add `JsonReadFeature.ALLOW_HEXADECIMAL_NUMBERS`
+   for JSON5-style hexadecimal integer literals
+  (3.2.0)
+
+Max Paulus (@maxpaulus43)
+ * Contributed #1211: Add `JsonParser.willInternPropertyNames()` to check whether
+   property name interning is enabl
+  (3.2.0)
+
+Antonin Janec (@xtonik)
+ * Contributed #1576: Use Java 17 intrinstics for long multiplication
+  (3.2.0)
+
+Scott Lewis (@scottslewis)
+ * Contributed #1637: Add `JsonPointer.startsWith(JsonPointer)` to check
+   prefix match
+  (3.3.0)
+
+@hdimitrieski
+ * Reported #1668: `WriterBasedJsonGenerator` AIOOBE when a zero-length custom
+   escape lands at the output buffer boundary
+  (3.1.7)
+
+Burak KALAYCI (@kalayciburak)
+ * Contributed #1668: `WriterBasedJsonGenerator` AIOOBE when a zero-length custom
+   escape lands at the output buffer boundary
+  (3.1.7)
+ * Contributed #1718: `File`/`Path` parser sources leak if decorated stream
+   `close()` fails on failed construction
+  (3.1.7)
+ * Contributed #1728: Quote supplementary code points in unexpected-character
+   messages
+  (3.1.8)
+ * Contributed #1731: `FilteringGeneratorDelegate` UTF-8 string writes used
+   `includeRawValue()` instead of `includeString()`
+  (3.3.0)
+
+Steven Schlansker (@stevenschlansker)
+ * Contributed #1688: Add `JsonParser.nextNameMatchAndToken()`, fused property
+   name match plus value token advance
+  (3.3.0)
+
+@youdie006
+ * Reported #1713: `UTF32Reader` corrupts or drops the low surrogate when a
+   supplementary character splits across a `read()` boundary
+  (3.1.7)
+
+@CCCLL
+ * Contributed #1724: Use target exception's original message and type when wrapping
+   `InvocationTargetException` with path information
+  (3.1.8)
+
+@bodograumann
+ * Reported #1728: Unexpected-character messages drop the high bits of a
+   supplementary code point
+  (3.1.8)
+
+Westin Miller (@westinrm)
+ * Requested #1652: No-allocation DoubleToDecimal / FloatToDecimal
+  (3.3.0)
+
+Elankumaran Srinivasan (@elang2)
+ * Contributed #1683: `ReaderBasedJsonParser` should reject JSON-escaped lone
+   surrogates in property names (mirror of #1541 fix in `UTF8StreamJsonParser`)
+  (3.1.8)
+
+David R. MacIver (@DRMacIver)
+ * Reported #1742: Non-blocking parser returns `NOT_AVAILABLE` but does not resume when
+   a feed ends inside an escaped surrogate pair in a property name
+  (3.1.8)
+
+@ItsDeadlyProgrammer
+ * Contributed #1756: Non-blocking parser does not decode multi-byte UTF-8 character
+   after backslash escape
+  (3.1.8)
