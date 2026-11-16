@@ -15,7 +15,15 @@ JSON library.
 === Releases ===
 ------------------------------------------------------------------------
 
-3.3.0 (not yet released)
+3.4.0 (not yet released)
+
+#1817: Non-blocking parser: `isNaN()` always returns `false`
+ (fix by @nvsaigokul-sudo)
+#1827: Custom `CharacterEscapes` drop escaping of non-default `quoteChar`
+  (and of forward slash with `ESCAPE_FORWARD_SLASHES`)
+ (reported, fix by @ubeddulla)
+
+3.3.0 (07-Nov-2026)
 
 #1637: Add `JsonPointer.startsWith(JsonPointer)` to check prefix match
  (contributed by @scottslewis)
@@ -38,7 +46,8 @@ JSON library.
 #1675: Allocate ByteArrayBuilder past-block list lazily
  (contributed by @pjfanning, w/ Claude code)
 #1680: Avoid per-character escape-table load in JSON generator String fast loops
- (reported, fix by @franz1981)
+ (reported by @franz1981)
+ (contributed by @pjfanning, @franz1981 w/ Claude code)
 #1685: Lower `BigDecimalParser` FastDoubleParser cutoff from 500 to 200 characters
  (reported, fix by DongNyoung L)
 #1686: Synchronous decimal number parsing buffers oversized values before
@@ -123,6 +132,10 @@ JSON library.
   before writing string values through `JsonParser.getString(Writer)`
  (reported by @DongNyoung)
  (fix by @DongNyoung)
+#1794: `maxStringLength` not enforced by `getBinaryValue()` when decoding
+  Base64 directly from input
+ (reported by @ubeddulla)
+ (fix by @ubeddulla)
 #1795: `UTF8DataInputJsonParser` accepts any control character as white space
   between tokens (also: CR-LF and token line numbers; Record Separator no longer
   accepted directly after root-level number or comment, same as other parsers)
@@ -130,12 +143,28 @@ JSON library.
  (fix by @ItsDeadlyProgrammer)
 #1798: `BinaryNameMatcher` does not pad partial quads: binary parsers match
   NUL-containing names to known properties (add optional padding)
+#1800: Don't read past end of `byte[]` in `ByteSourceJsonBootstrapper`
+ (contributed by @ubeddulla)
+#1801: Reject surrogate code points in `UTF32Reader`
+ (contributed by @ubeddulla)
 #1802: Pad `BufferRecycler` buffer slots and pool link to avoid false sharing
   with other objects (removes protected `_byteBuffers` and `_charBuffers`,
   adds about 200 bytes per recycler with compressed oops; new protected
   constructors `BufferRecycler(boolean)` and `BufferRecycler(int, int, boolean)`
   allow disabling padding)
  (contributed by @stevenschlansker, w/ Claude code)
+#1803: Consider validating async decimal number lengths before buffer expansion
+ (reported, fix by DongNyoung L)
+#1813: `getDoubleValue()` returns `0.0` after `getFloatValue()` for deferred
+  floating-point value
+ (contributed by @vera-rubin)
+#1814: `getBigIntegerValue()` fails after `getNumberType()`, `getDoubleValue()`/
+  `getFloatValue()` for big integer (also: number accessor results no longer
+  depend on order of access)
+ (fix by @cowtowncoder)
+#1815: Stale `BigDecimal` from previous token returned by `getBigIntegerValue()`
+  after `getNumberType()`
+ (fix by @cowtowncoder)
 
 3.2.5 (not yet released)
 
@@ -150,11 +179,27 @@ JSON library.
   before writing string values through `JsonParser.getString(Writer)`
  (reported by @DongNyoung)
  (fix by @DongNyoung)
+#1794: `maxStringLength` not enforced by `getBinaryValue()` when decoding
+  Base64 directly from input
+ (reported by @ubeddulla)
+ (fix by @ubeddulla)
 #1795: `UTF8DataInputJsonParser` accepts any control character as white space
   between tokens (also: CR-LF and token line numbers; Record Separator no longer
   accepted directly after root-level number or comment, same as other parsers)
  (reported by @ItsDeadlyProgrammer)
  (fix by @ItsDeadlyProgrammer)
+#1800: Don't read past end of `byte[]` in `ByteSourceJsonBootstrapper`
+ (contributed by @ubeddulla)
+#1813: `getDoubleValue()` returns `0.0` after `getFloatValue()` for deferred
+  floating-point value
+ (contributed by @vera-rubin)
+#1814: `getBigIntegerValue()` fails after `getNumberType()`, `getDoubleValue()`/
+  `getFloatValue()` for big integer (also: number accessor results no longer
+  depend on order of access)
+ (fix by @cowtowncoder)
+#1815: Stale `BigDecimal` from previous token returned by `getBigIntegerValue()`
+  after `getNumberType()`
+ (fix by @cowtowncoder)
 
 3.2.4 (18-Oct-2026)
 
@@ -296,11 +341,27 @@ No changes since 3.2.0
   before writing string values through `JsonParser.getString(Writer)`
  (reported by @DongNyoung)
  (fix by @DongNyoung)
+#1794: `maxStringLength` not enforced by `getBinaryValue()` when decoding
+  Base64 directly from input
+ (reported by @ubeddulla)
+ (fix by @ubeddulla)
 #1795: `UTF8DataInputJsonParser` accepts any control character as white space
   between tokens (also: CR-LF and token line numbers; Record Separator no longer
   accepted directly after root-level number or comment, same as other parsers)
  (reported by @ItsDeadlyProgrammer)
  (fix by @ItsDeadlyProgrammer)
+#1800: Don't read past end of `byte[]` in `ByteSourceJsonBootstrapper`
+ (contributed by @ubeddulla)
+#1813: `getDoubleValue()` returns `0.0` after `getFloatValue()` for deferred
+  floating-point value
+ (contributed by @vera-rubin)
+#1814: `getBigIntegerValue()` fails after `getNumberType()`, `getDoubleValue()`/
+  `getFloatValue()` for big integer (also: number accessor results no longer
+  depend on order of access)
+ (fix by @cowtowncoder)
+#1815: Stale `BigDecimal` from previous token returned by `getBigIntegerValue()`
+  after `getNumberType()`
+ (fix by @cowtowncoder)
 
 3.1.8 (17-Oct-2026)
 
