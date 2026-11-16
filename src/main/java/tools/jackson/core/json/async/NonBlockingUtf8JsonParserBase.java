@@ -414,7 +414,7 @@ public abstract class NonBlockingUtf8JsonParserBase
                 }
                 _setIntLength(len);
             }
-            return _valueComplete(JsonToken.VALUE_NUMBER_INT);
+            return _valueCompleteNumber(JsonToken.VALUE_NUMBER_INT);
 
         case MINOR_NUMBER_FRACTION_DIGITS:
             // 09-Oct-2026, tatu: [core#1746] input may end right after decimal point
@@ -422,12 +422,12 @@ public abstract class NonBlockingUtf8JsonParserBase
                 _reportInvalidEOF(": Decimal point not followed by a digit", JsonToken.VALUE_NUMBER_FLOAT);
             }
             _expLength = 0;
-            return _valueComplete(JsonToken.VALUE_NUMBER_FLOAT);
+            return _valueCompleteNumber(JsonToken.VALUE_NUMBER_FLOAT);
         case MINOR_NUMBER_EXPONENT_DIGITS:
             if (_expLength == 0) {
                 _reportInvalidEOF(": was expecting digits after exponent marker", JsonToken.VALUE_NUMBER_FLOAT);
             }
-            return _valueComplete(JsonToken.VALUE_NUMBER_FLOAT);
+            return _valueCompleteNumber(JsonToken.VALUE_NUMBER_FLOAT);
 
         case MINOR_NUMBER_PLUS:
         case MINOR_NUMBER_MINUS:
@@ -1505,11 +1505,11 @@ public abstract class NonBlockingUtf8JsonParserBase
     }
 
     // Number completion, when the byte that ended number is available: all such
-    // completions go via these two methods. Numbers ended by end-of-input are
-    // instead completed in `_finishTokenWithEOF()` (no separator check needed)
+    // completions (except hex numbers) go via these two methods. Numbers ended by
+    // end-of-input are instead completed in `_finishTokenWithEOF()` (no separator check needed)
     private JsonToken _numberComplete(JsonToken t) throws JacksonException {
         _verifyRootSpaceAfterNumber();
-        return _valueComplete(t);
+        return _valueCompleteNumber(t);
     }
 
     // 09-Oct-2026, tatu: "-0" retains sign in text, but not in integer-part length
@@ -1555,6 +1555,7 @@ public abstract class NonBlockingUtf8JsonParserBase
             if (outPtr >= outBuf.length) {
                 // NOTE: must expand to ensure contents all in a single buffer (to keep
                 // other parts of parsing simpler)
+                _streamReadConstraints.validateIntegerLength(outPtr);
                 outBuf = _textBuffer.expandCurrentSegment();
             }
             outBuf[outPtr++] = (char) ch;
@@ -1625,6 +1626,7 @@ public abstract class NonBlockingUtf8JsonParserBase
             }
             if (outPtr >= outBuf.length) {
                 // NOTE: must expand, to ensure contiguous buffer, outPtr is the length
+                _streamReadConstraints.validateIntegerLength(outPtr - 1);
                 outBuf = _textBuffer.expandCurrentSegment();
             }
             outBuf[outPtr++] = (char) ch;
@@ -1967,11 +1969,11 @@ public abstract class NonBlockingUtf8JsonParserBase
             requireFirst = false;
         }
         _textBuffer.setCurrentLength(outPtr);
-        final int hexLen = outPtr - prefixLen;
-        resetIntHex(_numberNegative, hexLen);
-        // As per #105, need separating space between root values (checked by
-        // `_numberComplete()`); `_inputPtr` points AT the terminator
-        return _numberComplete(JsonToken.VALUE_NUMBER_INT);
+        // Validate length (in `resetIntHex()`) before separator; as per #105, need
+        // separating space between root values (`_inputPtr` points AT the terminator)
+        resetIntHex(_numberNegative, outPtr - prefixLen);
+        _verifyRootSpaceAfterNumber();
+        return _valueComplete(JsonToken.VALUE_NUMBER_INT);
     }
 
     // Called from _finishTokenWithEOF when input ends while collecting hex digits.
@@ -1980,8 +1982,7 @@ public abstract class NonBlockingUtf8JsonParserBase
         int outPtr = _textBuffer.getCurrentSegmentSize();
         final boolean hasSignChar = (outBuf[0] == '-' || outBuf[0] == '+');
         final int prefixLen = hasSignChar ? 3 : 2;
-        final int hexLen = outPtr - prefixLen;
-        resetIntHex(_numberNegative, hexLen);
+        resetIntHex(_numberNegative, outPtr - prefixLen);
         return _valueComplete(JsonToken.VALUE_NUMBER_INT);
     }
 
@@ -2021,6 +2022,7 @@ public abstract class NonBlockingUtf8JsonParserBase
             if (outPtr >= outBuf.length) {
                 // NOTE: must expand to ensure contents all in a single buffer (to keep
                 // other parts of parsing simpler)
+                _streamReadConstraints.validateIntegerLength(outPtr + negMod);
                 outBuf = _textBuffer.expandCurrentSegment();
             }
             outBuf[outPtr++] = (char) ch;
@@ -2059,6 +2061,7 @@ public abstract class NonBlockingUtf8JsonParserBase
                     break;
                 }
                 if (outPtr >= outBuf.length) {
+                    _streamReadConstraints.validateFPLength(_intLength + fractLen);
                     outBuf = _textBuffer.expandCurrentSegment();
                 }
                 outBuf[outPtr++] = (char) ch;
@@ -2095,6 +2098,7 @@ public abstract class NonBlockingUtf8JsonParserBase
             while (ch >= INT_0 && ch <= INT_9) {
                 ++expLen;
                 if (outPtr >= outBuf.length) {
+                    _streamReadConstraints.validateFPLength(_intLength + _fractLength + expLen);
                     outBuf = _textBuffer.expandCurrentSegment();
                 }
                 outBuf[outPtr++] = (char) ch;
@@ -2131,6 +2135,7 @@ public abstract class NonBlockingUtf8JsonParserBase
         while (ch >= INT_0 && ch <= INT_9) {
             ++fractLen;
             if (outPtr >= outBuf.length) {
+                _streamReadConstraints.validateFPLength(_intLength + fractLen);
                 outBuf = _textBuffer.expandCurrentSegment();
             }
             outBuf[outPtr++] = (char) ch;
@@ -2195,6 +2200,7 @@ public abstract class NonBlockingUtf8JsonParserBase
         while (ch >= INT_0 && ch <= INT_9) {
             ++expLen;
             if (outPtr >= outBuf.length) {
+                _streamReadConstraints.validateFPLength(_intLength + _fractLength + expLen);
                 outBuf = _textBuffer.expandCurrentSegment();
             }
             outBuf[outPtr++] = (char) ch;

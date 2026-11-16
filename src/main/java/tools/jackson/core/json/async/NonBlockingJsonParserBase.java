@@ -783,14 +783,34 @@ public abstract class NonBlockingJsonParserBase
         return _updateToken(t);
     }
 
+    // 03-Nov-2026, tatu: [core#1815] Number tokens must clear text of earlier deferred
+    //   number (otherwise considered still deferred): all completions go via methods below
+    // 09-Nov-2026, tatu: [core#1817] ... same for `_numberIsNaN` and `_numberIsHex` flags;
+    //   hex numbers are the exception: `resetIntHex()` sets their state
+    final JsonToken _valueCompleteNumber(JsonToken t) throws JacksonException
+    {
+        _resetNumberState();
+        return _valueComplete(t);
+    }
+
     protected final JsonToken _valueCompleteInt(int value, String asText) throws JacksonException
     {
+        _resetNumberState();
         _textBuffer.resetWithString(asText);
         _intLength = asText.length();
         _numTypesValid = NR_INT; // to force parsing
         _numberInt = value;
         _majorState = _majorStateAfterValue;
         return _updateToken(JsonToken.VALUE_NUMBER_INT);
+    }
+
+    // Clears per-number state that may be left over from the preceding number token
+    private void _resetNumberState()
+    {
+        _numberString = null;
+        _numberDoubleDeferred = false;
+        _numberIsNaN = false;
+        _numberIsHex = false;
     }
 
     protected final String _nonStdToken(int type) {
@@ -806,14 +826,14 @@ public abstract class NonBlockingJsonParserBase
     protected final JsonToken _valueNonStdNumberComplete(int type) throws JacksonException
     {
         String tokenStr = NON_STD_TOKENS[type];
-        _textBuffer.resetWithString(tokenStr);
         if (!isEnabled(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS)) {
             _reportError("Non-standard token '%s': enable `JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS` to allow",
                     tokenStr);
         }
+        _numberIsHex = false;
         _intLength = 0;
-        _numTypesValid = NR_DOUBLE;
-        _numberDouble = NON_STD_TOKEN_VALUES[type];
+        // 09-Nov-2026, tatu: [core#1817] Same as blocking parsers (sets `_numberIsNaN`)
+        resetAsNaN(tokenStr, NON_STD_TOKEN_VALUES[type]);
         _majorState = _majorStateAfterValue;
         return _updateToken(JsonToken.VALUE_NUMBER_FLOAT);
     }
